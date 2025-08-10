@@ -19,6 +19,7 @@ GNU General Public License for more details.
 #include "xash3d_mathlib.h"
 #include "ipv6text.h"
 #include "net_ws_private.h"
+#include "net_transport.h"
 
 #if XASH_SDL == 2
 #include <SDL_thread.h>
@@ -1443,6 +1444,8 @@ Never called by the game logic, just the system event queing
 */
 qboolean NET_GetPacket( netsrc_t sock, netadr_t *from, byte *data, size_t *length )
 {
+	net_transport_t *transport = NET_GetCurrentTransport();
+	
 	if( !data || !length )
 		return false;
 
@@ -1451,6 +1454,35 @@ qboolean NET_GetPacket( netsrc_t sock, netadr_t *from, byte *data, size_t *lengt
 	if( NET_GetLoopPacket( sock, from, data, length ))
 	{
 		return NET_LagPacket( true, sock, from, length, data );
+	}
+	
+	// Use transport layer if available and not the default UDP transport
+	if( transport && Q_strcmp( transport->name, "UDP" ) != 0 )
+	{
+		// Check if transport has data available
+		if( transport->poll() > 0 )
+		{
+			int ret = transport->recv( (uint8_t *)data, *length, from );
+			
+			if( ret > 0 )
+			{
+				Con_DPrintf( "NET_GetPacket: received %d bytes via %s transport from %s\n", 
+					ret, transport->name, NET_AdrToString( *from ));
+				
+				*length = ret;
+				return NET_LagPacket( true, sock, from, length, data );
+			}
+			else if( ret < 0 )
+			{
+				Con_DPrintf( "NET_GetPacket: %s transport recv error\n", transport->name );
+				*length = 0;
+				return false;
+			}
+		}
+		
+		// No data available in transport
+		*length = 0;
+		return false;
 	}
 	else
 	{
@@ -1536,11 +1568,38 @@ void NET_SendPacketEx( netsrc_t sock, size_t length, const void *data, netadr_t 
 	struct sockaddr_storage	addr = { 0 };
 	SOCKET		net_socket = 0;
 	netadrtype_t type = NET_NetadrType( &to );
+	net_transport_t *transport = NET_GetCurrentTransport();
 
 	if( !net.initialized || type == NA_LOOPBACK )
 	{
 		NET_SendLoopPacket( sock, length, data, to );
 		return;
+	}
+
+	// Use transport layer if available and not the default UDP transport
+	if( transport && Q_strcmp( transport->name, "UDP" ) != 0 )
+	{
+		Con_DPrintf( "NET_SendPacketEx: using %s transport for %d bytes to %s\n", 
+			transport->name, (int)length, NET_AdrToString( to ));
+		
+		ret = transport->send( (const uint8_t *)data, (int)length, &to );
+		
+		if( ret == length )
+		{
+			// Success
+			return;
+		}
+		else if( ret < 0 )
+		{
+			// Transport error - log but don't fall back to UDP in browser builds
+#ifdef __EMSCRIPTEN__
+			Con_DPrintf( "NET_SendPacketEx: %s transport send failed\n", transport->name );
+			return;
+#else
+			Con_DPrintf( "NET_SendPacketEx: %s transport failed, falling back to UDP\n", transport->name );
+			// Fall through to UDP code
+#endif
+		}
 	}
 	else if( type == NA_BROADCAST || type == NA_IP )
 	{

@@ -180,6 +180,14 @@ def build(bld):
 
 	# basic build: dedicated only
 	source = bld.path.ant_glob(['common/*.c', 'common/imagelib/*.c', 'common/soundlib/*.c', 'server/*.c'])
+	
+	# include transport layer
+	source += ['common/net_transport.c']
+	
+	# include WebRTC transport for Emscripten builds
+	if bld.env.DEST_OS == 'emscripten':
+		source += ['common/net_transport_webrtc.c']
+		defines += ['NET_TRANSPORT_WEBRTC']
 
 	# include platform-specific sources, this shall not fail if directory doesn't exist
 	source += bld.path.ant_glob('platform/%s/*.c' % bld.env.DEST_OS)
@@ -273,6 +281,15 @@ def build(bld):
 			linkflags = ['-sINITIAL_MEMORY=134217728', '-sALLOW_MEMORY_GROWTH=1', '-sSTACK_SIZE=16777216']
 
 			linkflags += ['-sASYNCIFY=1']
+			
+			# Add WebRTC support
+			linkflags += ['-sEXPORT_TABLE=1', '-sALLOW_TABLE_GROWTH=1']
+			linkflags += ['-sEXPORTED_RUNTIME_METHODS=["addFunction","removeFunction","ccall","cwrap"]']
+			
+			# Include WebRTC JavaScript library
+			webrtc_lib_path = bld.srcnode.find_node('client/library_webrtc.js')
+			if webrtc_lib_path:
+				linkflags += ['--js-library', webrtc_lib_path.path_from(bld.bldnode)]
 
 			node = bld.srcnode.find_node('rodir')
 			if not node:
