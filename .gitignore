@@ -354,3 +354,7 @@ cmake-build-*
 3rdparty/SDL
 3rdparty/hlsdk-portable
 !scripts/build-ninja.py
+
+# cs 1.6 assets
+rodir/cstrike
+rodir/valve
